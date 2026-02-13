@@ -1,6 +1,9 @@
 import { Car } from '../entities/Car.js';
 import { Skidmarks } from '../entities/Skidmarks.js';
 import { PhysicsConfig } from '../config/PhysicsConfig.js';
+import { TrackConfig } from '../config/TrackConfig.js';
+import { SplineTrack } from '../tracks/SplineTrack.js';
+import { Track2 } from '../tracks/definitions/track2.js';
 
 export class GameScene extends Phaser.Scene {
     constructor() {
@@ -24,17 +27,22 @@ export class GameScene extends Phaser.Scene {
     }
 
     create() {
-        // Draw some ground markers so you can see movement
-        this.createGroundMarkers();
+        // Build the track (spline-based)
+        this.track = new SplineTrack(this, Track2);
 
         // Skidmarks layer (draws behind car)
         this.skidmarks = new Skidmarks(this);
 
-        // Spawn car in center
-        this.car = new Car(this, 640, 360);
+        // Spawn car at start line
+        const spawn = this.track.getSpawnPosition();
+        this.car = new Car(this, spawn.x, spawn.y);
+        this.car.angle = spawn.angle;
+        this.car.sprite.setAngle(spawn.angle);
 
         // Camera follows car
-        this.cameras.main.startFollow(this.car.sprite, true, 0.1, 0.1);
+        this.cameras.main.startFollow(this.car.sprite, true, 0.08, 0.08);
+        const bounds = this.track.getBounds();
+        this.cameras.main.setBounds(bounds.x, bounds.y, bounds.width, bounds.height);
 
         // HUD - fixed to screen
         this.createHUD();
@@ -44,58 +52,70 @@ export class GameScene extends Phaser.Scene {
         const hudStyle = {
             fontSize: '18px',
             fill: '#ffffff',
-            fontFamily: 'monospace'
+            fontFamily: 'monospace',
+            shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 3, fill: true }
         };
-        
+
         // Controls info
         this.add.text(10, 10, 'WASD or Arrow Keys to drive | SPACE = Handbrake', {
             fontSize: '14px',
-            fill: '#888888'
+            fill: '#888888',
+            shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
         }).setScrollFactor(0);
-        
+
+        // HUD background bar
+        const hudBg = this.add.rectangle(0, 660, 1280, 60, 0x000000, 0.5).setScrollFactor(0);
+        hudBg.setOrigin(0, 0);
+
         // Speed display
         this.speedText = this.add.text(10, 680, 'Speed: 0 km/h', hudStyle).setScrollFactor(0);
-        
+
         // Gear display
         this.gearText = this.add.text(200, 680, 'Gear: 1', hudStyle).setScrollFactor(0);
-        
+
         // RPM bar background
         const rpmBarBg = this.add.rectangle(400, 690, 200, 20, 0x333333).setScrollFactor(0);
         rpmBarBg.setOrigin(0, 0.5);
-        
+
         // RPM bar fill
         this.rpmBar = this.add.rectangle(400, 690, 0, 16, 0x00ff00).setScrollFactor(0);
         this.rpmBar.setOrigin(0, 0.5);
-        
+
         // RPM label
-        this.add.text(400, 665, 'RPM', { fontSize: '12px', fill: '#888888' }).setScrollFactor(0);
-        
+        this.add.text(400, 665, 'RPM', { fontSize: '12px', fill: '#aaaaaa',
+            shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
+        }).setScrollFactor(0);
+
         // Drift bar background
-        const driftBarBg = this.add.rectangle(650, 690, 150, 20, 0x333333).setScrollFactor(0);
+        const driftBarBg = this.add.rectangle(650, 690, 100, 20, 0x333333).setScrollFactor(0);
         driftBarBg.setOrigin(0, 0.5);
 
         // Drift bar fill
-        this.driftBar = this.add.rectangle(650, 690, 0, 16, 0xff8800).setScrollFactor(0);
+        this.driftBar = this.add.rectangle(650, 690, 0, 16, 0xffff00).setScrollFactor(0);
         this.driftBar.setOrigin(0, 0.5);
 
         // Drift label
-        this.add.text(650, 665, 'DRIFT', { fontSize: '12px', fill: '#888888' }).setScrollFactor(0);
-    }
-
-    createGroundMarkers() {
-        const graphics = this.add.graphics();
-        graphics.fillStyle(0x1a1a3e, 1);
-        
-        // Grid of dots so you can see you're moving
-        for (let x = -2000; x < 2000; x += 100) {
-            for (let y = -2000; y < 2000; y += 100) {
-                graphics.fillCircle(x, y, 3);
-            }
-        }
+        this.add.text(650, 665, 'DRIFT', { fontSize: '12px', fill: '#aaaaaa',
+            shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
+        }).setScrollFactor(0);
     }
 
     update(time, delta) {
         this.car.update(delta);
+
+        const cx = this.car.sprite.x;
+        const cy = this.car.sprite.y;
+
+        // Check object collision first (barriers)
+        const objCollision = this.track.checkObjectCollision(cx, cy, 15);
+        if (objCollision) {
+            this.car.sprite.setPosition(objCollision.x, objCollision.y);
+            this.car.speed *= objCollision.bounce;
+            this.car.slip *= objCollision.bounce;
+        }
+
+        // Off-road check (optional slowdown, no hard collision)
+        // For now, just let car drive anywhere - barriers define limits
 
         // Draw skidmarks when drifting
         this.skidmarks.update(this.car);
@@ -117,18 +137,17 @@ export class GameScene extends Phaser.Scene {
         } else {
             this.rpmBar.fillColor = 0x00ff00;  // Green
         }
-        
-        // Drift bar - shows lateral slide amount
-        const driftWidth = this.car.slipAmount * 146;
+
+        // Drift bar
+        const driftWidth = this.car.slipAmount * 96;
         this.driftBar.width = driftWidth;
 
-        // Color drift bar based on intensity
         if (this.car.slipAmount > PhysicsConfig.driftDangerThreshold) {
-            this.driftBar.fillColor = 0xff0000;  // Red - major drift
+            this.driftBar.fillColor = 0xff0000;  // Red
         } else if (this.car.slipAmount > PhysicsConfig.driftWarningThreshold) {
-            this.driftBar.fillColor = 0xff8800;  // Orange - sliding
+            this.driftBar.fillColor = 0xff8800;  // Orange
         } else {
-            this.driftBar.fillColor = 0xffff00;  // Yellow - light slip
+            this.driftBar.fillColor = 0xffff00;  // Yellow
         }
     }
 }

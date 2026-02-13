@@ -5,7 +5,7 @@ const config = {
     type: Phaser.AUTO,
     width: 1280,
     height: 720,
-    backgroundColor: '#e8dcc8',
+    backgroundColor: '#2d5a1e',
     parent: document.body,
     scale: {
         mode: Phaser.Scale.FIT,

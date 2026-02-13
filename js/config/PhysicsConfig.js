@@ -23,6 +23,14 @@ export const PhysicsConfig = {
     //   3 = aggressive (27:1 ratio)
     // Calibrated so 0-100 km/h time matches CarStats.acceleration0to100.
 
+    // Gear shift lag - brief acceleration pause when changing gears
+    gearShiftLag: 0.5,              // seconds of reduced power per shift
+    gearShiftPower: 0.1,            // acceleration multiplier during shift (0.1 = 10%)
+
+    // Within-gear RPM falloff - acceleration drops as RPM climbs
+    // 0.6 means: start of gear = 130%, end of gear = 70% (ratio 65:35)
+    gearRpmFalloff: 0.6,
+
     // Reverse speed as percentage of max speed
     reverseSpeedRatio: 0.2,                 // 20% of max
     
@@ -96,16 +104,24 @@ export const PhysicsConfig = {
     slipCurve: {
         onset: 0.2,         // No slip below 20% speed (~40 km/h)
         peak: 1.0,          // Maximum slip at top speed
-        power: 1.5,         // Gentler ramp - felt in mid-range
+        power: 1.0,         // Linear ramp - drift felt from ~80 km/h
         max: 1.0            // Multiplier for max slip force
     },
 
     // Base slip force (pixels/second of lateral movement at max)
-    slipBaseForce: 250,
+    slipBaseForce: 400,
 
     // How much grip reduces slip (0 = grip ignored, 1 = full effect)
     gripSlipReduction: 0.6,
+
+    // How much tyre level 12 reduces drift (0 = no effect, 0.9 = 90% less drift)
+    // Level 1 = full drift, Level 12 = 10% drift
+    tyreDriftReduction: 0.9,
     
+    // Slip buildup rate - how quickly slip accumulates when turning
+    // Lower = tyres grip longer before breaking loose, quick taps stay clean
+    slipBuildupRate: 2.0,
+
     // Slip decay rate - how quickly slip reduces when not turning
     // Higher = snappier recovery, Lower = more floaty/drifty
     slipDecayRate: 5.0,
@@ -117,17 +133,6 @@ export const PhysicsConfig = {
     minSteeringWhenSlipping: 0.25,
 
 
-    // ===========================================
-    // DRIFT THRESHOLDS (for HUD colors)
-    // ===========================================
-    
-    // Drift bar turns orange above this value
-    driftWarningThreshold: 0.3,
-
-    // Drift bar turns red above this value
-    driftDangerThreshold: 0.6,
-    
-    
     // ===========================================
     // RPM THRESHOLDS (for HUD colors)
     // ===========================================

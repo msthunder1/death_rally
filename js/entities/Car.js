@@ -39,6 +39,13 @@ export class Car {
         // Burnout state (wheel spin on launch)
         this.burnout = 0;           // 0-1 burnout intensity
 
+        // Extra weight from guns/upgrades (kg) - reduces acceleration
+        this.extraWeight = 0;
+
+        // Gear shift state
+        this.lastGear = 1;
+        this.gearShiftTimer = 0;
+
         // Input
         this.cursors = scene.input.keyboard.createCursorKeys();
         this.wasd = scene.input.keyboard.addKeys({
@@ -138,8 +145,26 @@ export class Car {
         // Update gear based on speed
         this.currentGear = this.findGear();
         
+        // Detect gear shift
+        if (this.currentGear !== this.lastGear) {
+            this.gearShiftTimer = PhysicsConfig.gearShiftLag;
+            this.lastGear = this.currentGear;
+        }
+        if (this.gearShiftTimer > 0) {
+            this.gearShiftTimer -= dt;
+        }
+
         // Get acceleration for current gear (already calibrated by powerCurve)
-        const accel = this.getCurrentAcceleration();
+        // Extra weight from guns/upgrades reduces acceleration: F=ma
+        const weightMult = this.physics.weight / (this.physics.weight + this.extraWeight);
+
+        // RPM falloff: stronger at start of gear (130%), weaker at end (70%)
+        const rpmMult = (1 + PhysicsConfig.gearRpmFalloff / 2) - PhysicsConfig.gearRpmFalloff * this.rpm;
+
+        // Gear shift lag: brief power cut when changing gears
+        const shiftMult = this.gearShiftTimer > 0 ? PhysicsConfig.gearShiftPower : 1;
+
+        const accel = this.getCurrentAcceleration() * weightMult * rpmMult * shiftMult;
         
         // Burnout detection (wheel spin on hard launch)
         const burnoutThreshold = this.physics.maxSpeedPx * SkidmarkConfig.burnoutMaxSpeedFraction;
@@ -201,14 +226,15 @@ export class Car {
             // LATERAL SLIP - car slides outward from turn
             const slipForceRatio = Curves.calculate(steerSpeedRatio, PhysicsConfig.slipCurve);
             const gripReduction = 1 - (this.physics.grip * PhysicsConfig.gripSlipReduction);
-            let targetSlip = -turnInput * slipForceRatio * gripReduction * PhysicsConfig.slipBaseForce;
+            const tyreDriftMult = 1 - ((this.physics.tyreLevel - 1) / 11) * PhysicsConfig.tyreDriftReduction;
+            let targetSlip = -turnInput * slipForceRatio * gripReduction * tyreDriftMult * PhysicsConfig.slipBaseForce;
 
             // Handbrake massively boosts slip
             if (this.handbraking) {
                 targetSlip *= HandbrakeConfig.slipMultiplier;
             }
 
-            this.slip += (targetSlip - this.slip) * Math.min(1, PhysicsConfig.slipDecayRate * dt * 2);
+            this.slip += (targetSlip - this.slip) * Math.min(1, PhysicsConfig.slipBuildupRate * dt);
 
             // Steering reduction derived from current slip amount
             const slipRatio = Math.min(1, Math.abs(this.slip) / PhysicsConfig.slipBaseForce);
@@ -261,10 +287,18 @@ export class Car {
         const lateralX = -Math.sin(radians) * this.slip;
         const lateralY = Math.cos(radians) * this.slip;
         
-        // Combined velocity
-        const vx = forwardX + lateralX;
-        const vy = forwardY + lateralY;
-        
+        // Combined velocity - capped so lateral slip doesn't add speed
+        let vx = forwardX + lateralX;
+        let vy = forwardY + lateralY;
+
+        const totalMag = Math.sqrt(vx * vx + vy * vy);
+        const targetMag = Math.abs(this.speed);
+        if (totalMag > targetMag && totalMag > 0) {
+            const scale = targetMag / totalMag;
+            vx *= scale;
+            vy *= scale;
+        }
+
         // Apply velocity
         this.sprite.setVelocity(vx, vy);
     }
