@@ -42,7 +42,7 @@ export const PhysicsConfig = {
     // ===========================================
 
     // Base braking force (km/h lost per second at low speed)
-    brakingForce: 120,
+    brakingForce: 160,
 
     // Braking effectiveness - stronger at low speed, weaker at high speed
     // Like real brakes: easy to stop from 30, hard to stop from 200
@@ -59,8 +59,8 @@ export const PhysicsConfig = {
         onset: 0.0,         // Always active
         peak: 1.0,          // Strongest at top speed
         power: 1.5,         // Slightly exponential
-        min: 0.1,           // 10% at low speed
-        max: 0.4            // 40% at high speed
+        min: 0.2,           // 20% at low speed (2x previous)
+        max: 0.8            // 80% at high speed (2x previous)
     },
     
     
@@ -89,10 +89,10 @@ export const PhysicsConfig = {
     
     // Speed lost when turning at speed
     speedLossCurve: {
-        onset: 0.2,         // No speed loss below 20% speed
+        onset: 0.4,         // No speed loss below 40% speed
         peak: 1.0,          // Maximum loss at top speed
-        power: 2,           // Quadratic - felt earlier in speed range
-        max: 72             // Maximum km/h lost per second at peak
+        power: 1.6,         // Sub-quadratic - felt across speed range
+        max: 1.4            // Max speed loss per second as ratio of car's top speed
     },
     
     
@@ -102,25 +102,22 @@ export const PhysicsConfig = {
     
     // When the car slides outward from turns
     slipCurve: {
-        onset: 0.2,         // No slip below 20% speed (~40 km/h)
+        onset: 0.4,         // No slip below 40% speed (~50 km/h)
         peak: 1.0,          // Maximum slip at top speed
         power: 1.0,         // Linear ramp - drift felt from ~80 km/h
         max: 1.0            // Multiplier for max slip force
     },
 
-    // Base slip force (pixels/second of lateral movement at max)
-    slipBaseForce: 400,
+    // Base slip as ratio of max speed (scales with pixelsPerMeter)
+    // 0.96 = at full slip, lateral velocity is 96% of max forward speed
+    slipBaseRatio: 0.96,
 
     // How much grip reduces slip (0 = grip ignored, 1 = full effect)
     gripSlipReduction: 0.6,
 
-    // How much tyre level 12 reduces drift (0 = no effect, 0.9 = 90% less drift)
-    // Level 1 = full drift, Level 12 = 10% drift
-    tyreDriftReduction: 0.9,
-    
     // Slip buildup rate - how quickly slip accumulates when turning
     // Lower = tyres grip longer before breaking loose, quick taps stay clean
-    slipBuildupRate: 2.0,
+    slipBuildupRate: 3.0,
 
     // Slip decay rate - how quickly slip reduces when not turning
     // Higher = snappier recovery, Lower = more floaty/drifty
@@ -148,7 +145,7 @@ export const PhysicsConfig = {
     // WORLD SCALE
     // ===========================================
     
-    // Pixels per meter (affects speed conversion)
-    // 10 = car sprite of 40px represents 4 meter car
-    pixelsPerMeter: 10,
+    // Pixels per meter (affects speed conversion and overall visual pace)
+    // 12 = car sprite of 40px represents ~3.3 meter car
+    pixelsPerMeter: 12,
 };

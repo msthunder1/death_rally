@@ -7,7 +7,9 @@
 
 import { Spline } from '../utils/Spline.js';
 import { TrackConfig } from '../config/TrackConfig.js';
+import { SurfaceConfig } from '../config/SurfaceConfig.js';
 import { TrackObjectFactory } from './TrackObjects.js';
+import { CenterLine } from './objects/CenterLine.js';
 
 export class SplineTrack {
     constructor(scene, trackDef) {
@@ -38,8 +40,10 @@ export class SplineTrack {
         const points = this.splinePoints;
         const edges = this.edges;
         
-        // Ground fill
-        gfx.fillStyle(TrackConfig.grassColor, 1);
+        // Ground fill — use terrain color if available
+        const surfaceDef = SurfaceConfig.surfaces[this.def.terrain];
+        const groundColor = surfaceDef ? surfaceDef.groundColor : TrackConfig.grassColor;
+        gfx.fillStyle(groundColor, 1);
         gfx.fillRect(0, 0, this.def.worldWidth, this.def.worldHeight);
         
         // Road surface - draw as filled polygon
@@ -70,7 +74,7 @@ export class SplineTrack {
         // Hmm, that won't work for filling between edges
         // Let's do it properly with quads
         gfx.clear();
-        gfx.fillStyle(TrackConfig.grassColor, 1);
+        gfx.fillStyle(groundColor, 1);
         gfx.fillRect(0, 0, this.def.worldWidth, this.def.worldHeight);
         
         // Draw road as connected quads
@@ -111,27 +115,20 @@ export class SplineTrack {
         gfx.lineTo(edges[0].right.x, edges[0].right.y);
         gfx.strokePath();
         
-        // Center line (dashed)
-        this.drawCenterLine(gfx);
-        
+        // Track markings (center line, etc.)
+        this.drawMarkings(gfx);
+
         // Start/finish line
         this.drawStartFinish(gfx);
     }
-    
-    drawCenterLine(gfx) {
-        const points = this.splinePoints;
-        const dashLength = 8;  // points per dash
-        
-        gfx.lineStyle(2, TrackConfig.centerLineColor, 0.7);
-        
-        for (let i = 0; i < points.length; i += dashLength * 2) {
-            gfx.beginPath();
-            gfx.moveTo(points[i].x, points[i].y);
-            
-            for (let j = 1; j < dashLength && i + j < points.length; j++) {
-                gfx.lineTo(points[i + j].x, points[i + j].y);
+
+    drawMarkings(gfx) {
+        const markings = this.def.markings || [];
+        for (const m of markings) {
+            if (m.type === 'centerLine') {
+                const cl = CenterLine.fromDef(m);
+                cl.draw(gfx, this.splinePoints);
             }
-            gfx.strokePath();
         }
     }
     
@@ -292,6 +289,20 @@ export class SplineTrack {
         };
     }
     
+    /**
+     * Get the terrain type at a world position.
+     * Returns 'road' if on track, or the track's default off-road terrain.
+     */
+    getTerrainAt(x, y) {
+        if (this.isOnTrack(x, y)) {
+            return 'road';
+        }
+
+        // Future: check painted terrain regions here
+
+        return this.def.terrain || 'grass';
+    }
+
     /**
      * Get world bounds for camera
      */

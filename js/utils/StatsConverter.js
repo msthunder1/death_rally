@@ -6,6 +6,7 @@
  */
 
 import { PhysicsConfig } from '../config/PhysicsConfig.js';
+import { TyreConfig } from '../config/TyreConfig.js';
 
 export class StatsConverter {
     // Scale factor: pixels per meter (from config)
@@ -105,21 +106,25 @@ export class StatsConverter {
     }
     
     /**
+     * Get tyre data for a given level (1-12).
+     */
+    static getTyreData(tyreLevel) {
+        const index = Math.max(0, Math.min(11, (tyreLevel || 1) - 1));
+        return TyreConfig[index];
+    }
+
+    /**
      * Convert tyre level to grip bonus.
-     * Level 1 (stock) = +0.0, Level 12 (premium) = +0.3
      */
     static tyreBonus(tyreLevel) {
-        const clamped = Math.max(1, Math.min(12, tyreLevel));
-        return (clamped - 1) * (0.3 / 11);
+        return this.getTyreData(tyreLevel).gripBonus;
     }
 
     /**
      * Tyre penalty on 0-100 time (seconds added).
-     * Level 12 = +0.0s, Level 1 = +1.1s (0.1s per level below 12)
      */
     static tyreAccelPenalty(tyreLevel) {
-        const clamped = Math.max(1, Math.min(12, tyreLevel));
-        return (12 - clamped) * 0.1;
+        return this.getTyreData(tyreLevel).accelPenalty;
     }
 
     /**
@@ -130,6 +135,8 @@ export class StatsConverter {
 
         // Effective grip = base grip + tyre bonus, capped at 1.0
         const effectiveGrip = Math.min(1.0, stats.grip + this.tyreBonus(stats.tyreLevel));
+
+        const tyreData = this.getTyreData(stats.tyreLevel);
 
         return {
             // Direct conversions
@@ -146,6 +153,8 @@ export class StatsConverter {
             // Handling
             grip: effectiveGrip,
             tyreLevel: stats.tyreLevel,
+            tyreDriftMultiplier: tyreData.driftMultiplier,
+            tyreBurnoutMultiplier: tyreData.burnoutMultiplier,
             weight: stats.weight,
             powerCurve: stats.powerCurve || 2,
 

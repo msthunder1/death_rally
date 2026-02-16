@@ -4,6 +4,8 @@ import { PhysicsConfig } from '../config/PhysicsConfig.js';
 import { TrackConfig } from '../config/TrackConfig.js';
 import { SplineTrack } from '../tracks/SplineTrack.js';
 import { Track2 } from '../tracks/definitions/track2.js';
+import { SurfaceConfig } from '../config/SurfaceConfig.js';
+import { t } from '../i18n/i18n.js';
 
 export class GameScene extends Phaser.Scene {
     constructor() {
@@ -11,24 +13,34 @@ export class GameScene extends Phaser.Scene {
     }
 
     preload() {
-        // Create a simple car sprite (colored rectangle for now)
+        // Only create car texture if it doesn't exist yet (avoids duplicate on scene restart)
+        if (this.textures.exists('car')) return;
+
         const graphics = this.make.graphics({ x: 0, y: 0, add: false });
-        
+
         // Car body - 40x20 rectangle
         graphics.fillStyle(0xe63946, 1);  // Red
         graphics.fillRect(0, 0, 40, 20);
-        
+
         // Windshield hint
         graphics.fillStyle(0x1d3557, 1);  // Dark blue
         graphics.fillRect(25, 4, 10, 12);
-        
+
         graphics.generateTexture('car', 40, 20);
         graphics.destroy();
     }
 
+    init(data) {
+        this.editorData = data || {};
+    }
+
     create() {
+        // Accept track definition from scene data (editor test mode) or use default
+        const editorData = this.editorData || {};
+        const trackDef = editorData.trackDef || Track2;
+
         // Build the track (spline-based)
-        this.track = new SplineTrack(this, Track2);
+        this.track = new SplineTrack(this, trackDef);
 
         // Skidmarks layer (draws behind car)
         this.skidmarks = new Skidmarks(this);
@@ -42,7 +54,30 @@ export class GameScene extends Phaser.Scene {
         // Camera follows car
         this.cameras.main.startFollow(this.car.sprite, true, 0.08, 0.08);
         const bounds = this.track.getBounds();
-        this.cameras.main.setBounds(bounds.x, bounds.y, bounds.width, bounds.height);
+        // Add margin so camera can show area around track edges
+        const margin = 200;
+        this.cameras.main.setBounds(
+            bounds.x - margin, bounds.y - margin,
+            bounds.width + margin * 2, bounds.height + margin * 2
+        );
+
+        // If launched from editor, Escape returns to editor
+        if (editorData.fromEditor) {
+            this.add.text(10, 30, t('game.escBackToEditor'), {
+                fontSize: '14px',
+                fill: '#888888',
+                shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
+            }).setScrollFactor(0);
+
+            this.input.keyboard.on('keydown-ESC', () => {
+                this.scene.start('EditorScene', {
+                    controlPoints: editorData.controlPoints,
+                    trackName: editorData.trackName,
+                    trackTerrain: editorData.trackTerrain,
+                    trackId: editorData.trackId
+                });
+            });
+        }
 
         // HUD - fixed to screen
         this.createHUD();
@@ -57,7 +92,7 @@ export class GameScene extends Phaser.Scene {
         };
 
         // Controls info
-        this.add.text(10, 10, 'WASD or Arrow Keys to drive | SPACE = Handbrake', {
+        this.add.text(10, 10, t('game.controls'), {
             fontSize: '14px',
             fill: '#888888',
             shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
@@ -68,10 +103,10 @@ export class GameScene extends Phaser.Scene {
         hudBg.setOrigin(0, 0);
 
         // Speed display
-        this.speedText = this.add.text(10, 680, 'Speed: 0 km/h', hudStyle).setScrollFactor(0);
+        this.speedText = this.add.text(10, 680, t('game.speed', { value: 0 }), hudStyle).setScrollFactor(0);
 
         // Gear display
-        this.gearText = this.add.text(200, 680, 'Gear: 1', hudStyle).setScrollFactor(0);
+        this.gearText = this.add.text(200, 680, t('game.gear', { value: 1 }), hudStyle).setScrollFactor(0);
 
         // RPM bar background
         const rpmBarBg = this.add.rectangle(400, 690, 200, 20, 0x333333).setScrollFactor(0);
@@ -82,7 +117,7 @@ export class GameScene extends Phaser.Scene {
         this.rpmBar.setOrigin(0, 0.5);
 
         // RPM label
-        this.add.text(400, 665, 'RPM', { fontSize: '12px', fill: '#aaaaaa',
+        this.add.text(400, 665, t('game.rpm'), { fontSize: '12px', fill: '#aaaaaa',
             shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
         }).setScrollFactor(0);
 
@@ -95,7 +130,7 @@ export class GameScene extends Phaser.Scene {
         this.driftBar.setOrigin(0, 0.5);
 
         // Drift label
-        this.add.text(650, 665, 'DRIFT', { fontSize: '12px', fill: '#aaaaaa',
+        this.add.text(650, 665, t('game.drift'), { fontSize: '12px', fill: '#aaaaaa',
             shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
         }).setScrollFactor(0);
     }
@@ -114,16 +149,23 @@ export class GameScene extends Phaser.Scene {
             this.car.slip *= objCollision.bounce;
         }
 
-        // Off-road check (optional slowdown, no hard collision)
-        // For now, just let car drive anywhere - barriers define limits
+        // Surface/terrain detection
+        const terrainKey = this.track.getTerrainAt(cx, cy);
+        const targetMult = terrainKey === 'road'
+            ? SurfaceConfig.road
+            : SurfaceConfig.surfaces[this.track.def.terrain || 'grass'].terrain;
+        this.car.setTerrain(terrainKey, targetMult, delta / 1000, SurfaceConfig.transitionRate);
 
-        // Draw skidmarks when drifting
-        this.skidmarks.update(this.car);
+        // Draw skidmarks (trail style depends on current surface)
+        const trailConfig = this.car.currentTerrain === 'road'
+            ? SurfaceConfig.surfaces[this.track.def.theme || 'asphalt'].trail
+            : SurfaceConfig.surfaces[this.track.def.terrain || 'grass'].trail;
+        this.skidmarks.update(this.car, trailConfig);
 
         // Update HUD
         const speedKmh = Math.round(this.car.getSpeedKmh());
-        this.speedText.setText(`Speed: ${speedKmh} km/h`);
-        this.gearText.setText(`Gear: ${this.car.currentGear}`);
+        this.speedText.setText(t('game.speed', { value: speedKmh }));
+        this.gearText.setText(t('game.gear', { value: this.car.currentGear }));
         
         // RPM bar (0-200 pixels width)
         const rpmWidth = this.car.rpm * 196;

@@ -9,7 +9,7 @@ export const CarStats = {
     
     // Performance
     acceleration0to100: 4,    // seconds to reach 100 km/h
-    maxSpeed: 150,             // km/h top speed
+    maxSpeed: 125,             // km/h top speed
     gears: 5,                  // number of gears
     powerCurve: 2,             // 1 = linear, 2 = realistic drag, 3 = aggressive
     

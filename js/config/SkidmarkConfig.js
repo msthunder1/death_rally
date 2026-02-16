@@ -35,8 +35,4 @@ export const SkidmarkConfig = {
 
     // Base burnout intensity (before tyre reduction)
     burnoutIntensity: 0.7,
-
-    // How much better tyres reduce burnout (0 = no effect, 1 = eliminates it)
-    // Level 1 tyres = full burnout, level 6 = barely visible + ends sooner
-    burnoutTyreReduction: 0.9,
 };

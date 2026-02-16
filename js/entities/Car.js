@@ -4,6 +4,7 @@ import { PhysicsConfig } from '../config/PhysicsConfig.js';
 import { HandbrakeConfig } from '../config/HandbrakeConfig.js';
 import { SkidmarkConfig } from '../config/SkidmarkConfig.js';
 import { Curves } from '../utils/Curves.js';
+import { SurfaceConfig } from '../config/SurfaceConfig.js';
 
 export class Car {
     constructor(scene, x, y, customStats = null) {
@@ -41,6 +42,17 @@ export class Car {
 
         // Extra weight from guns/upgrades (kg) - reduces acceleration
         this.extraWeight = 0;
+
+        // Surface/terrain state (set by GameScene each frame)
+        this.currentTerrain = 'road';
+        this.terrainMultipliers = {
+            speedMultiplier: 1.0,
+            accelerationMultiplier: 1.0,
+            gripMultiplier: 1.0,
+            slipMultiplier: 1.0,
+            brakeMultiplier: 1.0,
+            dragMultiplier: 1.0,
+        };
 
         // Gear shift state
         this.lastGear = 1;
@@ -128,6 +140,33 @@ export class Car {
         };
     }
 
+    /**
+     * Set current terrain multipliers.
+     * Speed multiplier applies instantly (speed reduction handled gradually in update).
+     * Other multipliers transition linearly at rate units/second.
+     */
+    setTerrain(terrainKey, target, dt, rate) {
+        this.currentTerrain = terrainKey;
+        const m = this.terrainMultipliers;
+        const step = rate * dt;
+
+        function moveToward(current, goal, maxStep) {
+            const diff = goal - current;
+            if (Math.abs(diff) <= maxStep) return goal;
+            return current + Math.sign(diff) * maxStep;
+        }
+
+        // Speed multiplier instant — gradual speed reduction in update()
+        m.speedMultiplier = target.speedMultiplier;
+
+        // Handling multipliers transition linearly
+        m.accelerationMultiplier = moveToward(m.accelerationMultiplier, target.accelerationMultiplier, step);
+        m.gripMultiplier = moveToward(m.gripMultiplier, target.gripMultiplier, step);
+        m.slipMultiplier = moveToward(m.slipMultiplier, target.slipMultiplier, step);
+        m.brakeMultiplier = moveToward(m.brakeMultiplier, target.brakeMultiplier, step);
+        m.dragMultiplier = moveToward(m.dragMultiplier, target.dragMultiplier, step);
+    }
+
     update(delta) {
         const dt = delta / 1000;
         const speedRatio = Math.abs(this.speed) / this.physics.maxSpeedPx;
@@ -164,15 +203,16 @@ export class Car {
         // Gear shift lag: brief power cut when changing gears
         const shiftMult = this.gearShiftTimer > 0 ? PhysicsConfig.gearShiftPower : 1;
 
-        const accel = this.getCurrentAcceleration() * weightMult * rpmMult * shiftMult;
+        const baseAccel = this.getCurrentAcceleration() * weightMult * rpmMult * shiftMult;
+        const accel = baseAccel * this.terrainMultipliers.accelerationMultiplier;
         
         // Burnout detection (wheel spin on hard launch)
         const burnoutThreshold = this.physics.maxSpeedPx * SkidmarkConfig.burnoutMaxSpeedFraction;
-        const tyreMult = 1 - ((this.physics.tyreLevel - 1) / 11) * SkidmarkConfig.burnoutTyreReduction;
-        const effectiveThreshold = burnoutThreshold * tyreMult;
+        const tyreBurnoutMult = this.physics.tyreBurnoutMultiplier;
+        const effectiveThreshold = burnoutThreshold * tyreBurnoutMult;
         if (gasPressed && this.speed >= 0 && this.speed < effectiveThreshold) {
             const speedFactor = 1 - (this.speed / effectiveThreshold);
-            this.burnout = speedFactor * tyreMult * SkidmarkConfig.burnoutIntensity;
+            this.burnout = speedFactor * tyreBurnoutMult * SkidmarkConfig.burnoutIntensity;
         } else {
             this.burnout = 0;
         }
@@ -184,7 +224,7 @@ export class Car {
             if (this.speed > 0) {
                 // Braking curve - stronger at low speed, weaker at high speed
                 const brakeMultiplier = Curves.calculateInverse(speedRatio, PhysicsConfig.brakingCurve);
-                const brakeForce = StatsConverter.kmhToPixels(PhysicsConfig.brakingForce) * brakeMultiplier * this.physics.brakeForce;
+                const brakeForce = StatsConverter.kmhToPixels(PhysicsConfig.brakingForce) * brakeMultiplier * this.physics.brakeForce * this.terrainMultipliers.brakeMultiplier;
                 this.speed -= brakeForce * dt;
                 if (this.speed < 0) this.speed = 0;
             } else {
@@ -192,21 +232,28 @@ export class Car {
                 this.speed -= accel * PhysicsConfig.reverseAccelerationRatio * dt;
             }
         } else {
-            // Engine braking - exponential curve
+            // Surface drag — decoupled from acceleration, stronger off-road
+            const dragAccel = baseAccel * this.terrainMultipliers.dragMultiplier;
             const engineBrakeMultiplier = Curves.calculateRange(speedRatio, PhysicsConfig.engineBrakingCurve);
-            
+
             if (this.speed > 0) {
-                this.speed -= accel * engineBrakeMultiplier * dt;
+                this.speed -= dragAccel * engineBrakeMultiplier * dt;
                 if (this.speed < 0) this.speed = 0;
             } else if (this.speed < 0) {
-                this.speed += accel * engineBrakeMultiplier * dt;
+                this.speed += dragAccel * engineBrakeMultiplier * dt;
                 if (this.speed > 0) this.speed = 0;
             }
         }
         
-        // Clamp speed
-        const maxReverse = this.physics.maxSpeedPx * PhysicsConfig.reverseSpeedRatio;
-        this.speed = Phaser.Math.Clamp(this.speed, -maxReverse, this.physics.maxSpeedPx);
+        // Terrain speed reduction — gradual linear pull-down to terrain cap
+        const terrainMaxSpeed = this.physics.maxSpeedPx * this.terrainMultipliers.speedMultiplier;
+        if (this.speed > terrainMaxSpeed) {
+            const fullGap = this.physics.maxSpeedPx - terrainMaxSpeed;
+            const reductionRate = fullGap / SurfaceConfig.speedTransitionTime;
+            this.speed = Math.max(terrainMaxSpeed, this.speed - reductionRate * dt);
+        }
+        const maxReverse = terrainMaxSpeed * PhysicsConfig.reverseSpeedRatio;
+        if (this.speed < -maxReverse) this.speed = -maxReverse;
         
         // Update RPM
         this.rpm = this.calcRPM();
@@ -222,12 +269,16 @@ export class Car {
         if (leftPressed && Math.abs(this.speed) > PhysicsConfig.minSpeedToTurn) turnInput = -1;
         if (rightPressed && Math.abs(this.speed) > PhysicsConfig.minSpeedToTurn) turnInput = 1;
         
+        // Slip base force scales with max speed (so drift scales with pixelsPerMeter)
+        const slipBase = this.physics.maxSpeedPx * PhysicsConfig.slipBaseRatio;
+
         if (turnInput !== 0) {
             // LATERAL SLIP - car slides outward from turn
             const slipForceRatio = Curves.calculate(steerSpeedRatio, PhysicsConfig.slipCurve);
-            const gripReduction = 1 - (this.physics.grip * PhysicsConfig.gripSlipReduction);
-            const tyreDriftMult = 1 - ((this.physics.tyreLevel - 1) / 11) * PhysicsConfig.tyreDriftReduction;
-            let targetSlip = -turnInput * slipForceRatio * gripReduction * tyreDriftMult * PhysicsConfig.slipBaseForce;
+            const effectiveGrip = this.physics.grip * this.terrainMultipliers.gripMultiplier;
+            const gripReduction = 1 - (effectiveGrip * PhysicsConfig.gripSlipReduction);
+            const tyreDriftMult = this.physics.tyreDriftMultiplier;
+            let targetSlip = -turnInput * slipForceRatio * gripReduction * tyreDriftMult * slipBase * this.terrainMultipliers.slipMultiplier;
 
             // Handbrake massively boosts slip
             if (this.handbraking) {
@@ -237,7 +288,7 @@ export class Car {
             this.slip += (targetSlip - this.slip) * Math.min(1, PhysicsConfig.slipBuildupRate * dt);
 
             // Steering reduction derived from current slip amount
-            const slipRatio = Math.min(1, Math.abs(this.slip) / PhysicsConfig.slipBaseForce);
+            const slipRatio = Math.min(1, Math.abs(this.slip) / slipBase);
             const slipSteeringLoss = slipRatio * PhysicsConfig.slipSteeringReduction;
             let effectiveTurn = Math.max(PhysicsConfig.minSteeringWhenSlipping, 1 - slipSteeringLoss);
 
@@ -251,9 +302,11 @@ export class Car {
             const turnAmount = this.turnSpeed * dt * baseTurnEffect * effectiveTurn;
             this.angle += turnAmount * turnInput * Math.sign(this.speed);
 
-            // Speed loss from cornering (config is in km/h, convert to px/s)
-            const speedLossKmh = Curves.calculate(steerSpeedRatio, PhysicsConfig.speedLossCurve);
-            const gripEnergyLoss = StatsConverter.kmhToPixels(speedLossKmh) * this.physics.grip * Math.abs(turnInput) * dt;
+            // Speed loss from cornering (scales with slip buildup, same as skidmarks)
+            // speedLossCurve.max is a ratio of car's top speed
+            const speedLossRatio = Curves.calculate(steerSpeedRatio, PhysicsConfig.speedLossCurve);
+            const currentSlipAmount = Math.min(1, Math.abs(this.slip) / slipBase);
+            const gripEnergyLoss = StatsConverter.kmhToPixels(speedLossRatio * this.physics.maxSpeedKmh) * this.physics.grip * Math.abs(turnInput) * currentSlipAmount * dt;
             if (this.speed > 0) {
                 this.speed = Math.max(0, this.speed - gripEnergyLoss);
             }
@@ -270,7 +323,7 @@ export class Car {
         }
 
         // Track slip amount for HUD (normalized 0-1)
-        this.slipAmount = Math.min(1, Math.abs(this.slip) / PhysicsConfig.slipBaseForce);
+        this.slipAmount = Math.min(1, Math.abs(this.slip) / slipBase);
         
         // Apply rotation to sprite
         this.sprite.setAngle(this.angle);
